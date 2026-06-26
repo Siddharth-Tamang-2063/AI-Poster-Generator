@@ -1,15 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { hitTest, hitHandle } from "../utils/canvas";
 
-/**
- * Wires up canvas mouse interaction (select, drag, resize, rotate) and
- * keyboard shortcuts (undo/redo/delete) for the editor.
- *
- * Binds listeners directly to the canvas element via useEffect — this
- * replaces the original code's pattern of reassigning onmousedown etc.
- * inside the render body, which re-ran on every render and bypassed
- * React's event system.
- */
 export function useCanvasInteraction({
   canvasRef, elementsRef, selectedIdRef, scaleRef,
   setSelectedId, updateEl, pushHistory, undo, redo, deleteSelected,
@@ -22,22 +13,23 @@ export function useCanvasInteraction({
   const rotating = useRef(false);
   const rotateStart = useRef({ angle: 0, el: null });
 
- const getCanvasPos = useCallback((e) => {
- const canvas = canvasRef.current;
-if (!canvas) return;
-  if (!canvas) return { x: 0, y: 0 };
-const rect = canvas.getBoundingClientRect();
+  // ── Coordinate helper ───────────────────────────────────────────────────────
+  // Works for both MouseEvent (clientX/Y) and a plain {clientX, clientY} object
+  // extracted from a TouchEvent's first touch.
+  const getCanvasPos = useCallback((e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scale = scaleRef.current || 1;
+    return {
+      x: (e.clientX - rect.left) / scale,
+      y: (e.clientY - rect.top) / scale,
+    };
+  }, [canvasRef, scaleRef]);
 
-  const scale = scaleRef.current || 1;
-
-  return {
-    x: (e.clientX - rect.left) / scale,
-    y: (e.clientY - rect.top) / scale,
-  };
-}, [canvasRef, scaleRef]);
-
-  const onMouseDown = useCallback((e) => {
-    const { x, y } = getCanvasPos(e);
+  // ── Shared pointer-down logic ───────────────────────────────────────────────
+  const onPointerDown = useCallback((clientX, clientY) => {
+    const { x, y } = getCanvasPos({ clientX, clientY });
     const els = elementsRef.current;
     const selId = selectedIdRef.current;
     const sel = els.find((el) => el.id === selId);
@@ -72,8 +64,9 @@ const rect = canvas.getBoundingClientRect();
     setSelectedId(null);
   }, [getCanvasPos, elementsRef, selectedIdRef, pushHistory, setSelectedId]);
 
-  const onMouseMove = useCallback((e) => {
-    const { x, y } = getCanvasPos(e);
+  // ── Shared pointer-move logic ───────────────────────────────────────────────
+  const onPointerMove = useCallback((clientX, clientY) => {
+    const { x, y } = getCanvasPos({ clientX, clientY });
     const canvas = canvasRef.current;
     const selId = selectedIdRef.current;
     const sel = elementsRef.current.find((el) => el.id === selId);
@@ -97,27 +90,12 @@ const rect = canvas.getBoundingClientRect();
     }
     if (isDragging.current && sel) {
       updateEl(sel.id, { x: x - dragOff.current.x, y: y - dragOff.current.y });
-    if (canvas) canvas.style.cursor = "grabbing";
-      return;
+      if (canvas) canvas.style.cursor = "grabbing";
     }
+  }, [getCanvasPos, canvasRef, elementsRef, selectedIdRef, updateEl]);
 
-    if (sel) {
-      const handle = hitHandle(sel, x, y);
-      
-    } else canvas.style.cursor = "default";
-   if (canvas) {
-  canvas.style.cursor =
-    handle === "rotate"
-      ? "crosshair"
-      : handle
-      ? "nwse-resize"
-      : hitTest(sel, x, y)
-      ? "move"
-      : "default";
-}
-  }, [getCanvasPos, canvasRef, elementsRef, selectedIdRef, updateEl, scaleRef]);
-
-  const onMouseUp = useCallback(() => {
+  // ── Shared pointer-up logic ─────────────────────────────────────────────────
+  const onPointerUp = useCallback(() => {
     isDragging.current = false;
     resizing.current = false;
     rotating.current = false;
@@ -127,23 +105,63 @@ const rect = canvas.getBoundingClientRect();
     if (canvasRef.current) canvasRef.current.style.cursor = "default";
   }, [canvasRef]);
 
-  // Bind mouse listeners directly to the canvas element.
+  // ── Mouse event handlers ────────────────────────────────────────────────────
+  const onMouseDown = useCallback((e) => onPointerDown(e.clientX, e.clientY), [onPointerDown]);
+  const onMouseMove = useCallback((e) => onPointerMove(e.clientX, e.clientY), [onPointerMove]);
+
+  // ── Touch event handlers ────────────────────────────────────────────────────
+  const onTouchStart = useCallback((e) => {
+    // Only handle single-finger touches — let two-finger pinch/scroll pass through
+    if (e.touches.length !== 1) return;
+    e.preventDefault(); // prevent scroll while dragging an element
+    const t = e.touches[0];
+    onPointerDown(t.clientX, t.clientY);
+  }, [onPointerDown]);
+
+  const onTouchMove = useCallback((e) => {
+    if (e.touches.length !== 1) return;
+    // Only prevent default (page scroll) when actively manipulating something
+    if (isDragging.current || resizing.current || rotating.current) {
+      e.preventDefault();
+    }
+    const t = e.touches[0];
+    onPointerMove(t.clientX, t.clientY);
+  }, [onPointerMove]);
+
+  const onTouchEnd = useCallback(() => {
+    onPointerUp();
+  }, [onPointerUp]);
+
+  // ── Bind all listeners to the canvas ───────────────────────────────────────
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
+
+    // Mouse
     c.addEventListener("mousedown", onMouseDown);
     c.addEventListener("mousemove", onMouseMove);
-    c.addEventListener("mouseup", onMouseUp);
-    c.addEventListener("mouseleave", onMouseUp);
+    c.addEventListener("mouseup", onPointerUp);
+    c.addEventListener("mouseleave", onPointerUp);
+
+    // Touch — { passive: false } required so e.preventDefault() works
+    c.addEventListener("touchstart", onTouchStart, { passive: false });
+    c.addEventListener("touchmove", onTouchMove, { passive: false });
+    c.addEventListener("touchend", onTouchEnd);
+    c.addEventListener("touchcancel", onTouchEnd);
+
     return () => {
       c.removeEventListener("mousedown", onMouseDown);
       c.removeEventListener("mousemove", onMouseMove);
-      c.removeEventListener("mouseup", onMouseUp);
-      c.removeEventListener("mouseleave", onMouseUp);
+      c.removeEventListener("mouseup", onPointerUp);
+      c.removeEventListener("mouseleave", onPointerUp);
+      c.removeEventListener("touchstart", onTouchStart);
+      c.removeEventListener("touchmove", onTouchMove);
+      c.removeEventListener("touchend", onTouchEnd);
+      c.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [canvasRef, onMouseDown, onMouseMove, onMouseUp]);
+  }, [canvasRef, onMouseDown, onMouseMove, onPointerUp, onTouchStart, onTouchMove, onTouchEnd]);
 
-  // Keyboard shortcuts: undo / redo / delete.
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;

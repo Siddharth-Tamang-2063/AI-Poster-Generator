@@ -94,7 +94,7 @@ const IMAGE_MODEL_CONFIG = {
   },
 };
 
-app.use(cors({ origin: frontendOrigin }));
+app.use(cors());
 app.use(express.json());
 
 // ── Prompt Optimization via Groq ──────────────────────────────────────────────

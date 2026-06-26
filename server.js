@@ -37,6 +37,7 @@ Enrichment rules:
 - Color mood should feel cohesive — suggest dominant and accent tones that suit the product category.
 - Always pick the most visually impactful options for dropdowns based on the product type.
 - Never mention logos, brand names, trademarks, typography, or UI elements in the topic or context.
+- NEVER include any words, letters, text, signs, labels, captions, or typography in the scene description. The image must be 100% text-free.
 - Only pick values from the allowed options for dropdown fields.
 - Return nothing except the JSON object.
 `;
@@ -94,7 +95,7 @@ const IMAGE_MODEL_CONFIG = {
   },
 };
 
-app.use(cors());
+app.use(cors({ origin: frontendOrigin }));
 app.use(express.json());
 
 // ── Prompt Optimization via Groq ──────────────────────────────────────────────
@@ -460,17 +461,22 @@ function buildImagePrompt({ prompt, options }) {
     if (negativePrompt?.trim()) parts.push(`avoid: ${negativePrompt.trim()}`);
   }
 
-  // Cinematic quality suffixes
+  // Cinematic quality suffixes — text suppression is listed first and repeated for weight
   parts.push(
+    "no text",
+    "no letters",
+    "no words",
+    "no typography",
+    "no captions",
+    "no labels",
+    "no watermark",
+    "no logo",
     "ultra high resolution",
     "professional product photography",
     "volumetric lighting",
     "shallow depth of field",
     "cinematic atmosphere",
-    "empty copy space for text overlays",
-    "no text",
-    "no watermark",
-    "no logo"
+    "clean empty copy space for text overlays"
   );
 
   const result = parts.join(", ");

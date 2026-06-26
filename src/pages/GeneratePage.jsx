@@ -356,7 +356,7 @@ export default function GeneratePage({ onGenerate }) {
               color: T.text2,
             }}
           >
-            AI Generated <span style={{ color: T.text }}>Poster</span>
+            PosterAI <span style={{ color: T.text }}>Studio</span>
           </span>
         </div>
 
